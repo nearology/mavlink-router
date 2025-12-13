@@ -155,6 +155,19 @@ int Mainloop::write_msg(const std::shared_ptr<Endpoint> &e, const struct buffer 
     return r;
 }
 
+bool Mainloop::add_endpoint(const std::shared_ptr<Endpoint> &endpoint)
+{
+    if (endpoint->fd >= 0) {
+        if (add_fd(endpoint->fd, endpoint.get(), EPOLLIN) < 0) {
+            return false;
+        }
+    }
+
+    g_endpoints.emplace_back(endpoint);
+
+    return true;
+}
+
 void Mainloop::route_msg(struct buffer *buf)
 {
     bool unknown = true;
@@ -225,21 +238,17 @@ void Mainloop::handle_tcp_connection()
 {
     log_debug("TCP Server: New client");
 
-    auto *tcp = new TcpEndpoint{"dynamic"};
+    auto tcp = std::make_shared<TcpEndpoint>("dynamic");
 
     int fd = tcp->accept(g_tcp_fd);
     if (fd == -1) {
-        goto accept_error;
+        log_error("TCP Server: Could not accept TCP connection (%m)");
+        return;
     }
 
-    g_endpoints.emplace_back(tcp);
-    this->add_fd(g_endpoints.back()->fd, g_endpoints.back().get(), EPOLLIN);
-
-    return;
-
-accept_error:
-    log_error("TCP Server: Could not accept TCP connection (%m)");
-    delete tcp;
+    if (!add_endpoint(tcp)) {
+        log_error("TCP Server: Could not register new TCP client");
+    }
 }
 
 int Mainloop::loop()
@@ -374,9 +383,9 @@ bool Mainloop::add_endpoints(const Configuration &config)
             return false;
         }
 
-        g_endpoints.push_back(uart);
-        auto endpoint = g_endpoints.back();
-        this->add_fd(endpoint->fd, endpoint.get(), EPOLLIN);
+        if (!add_endpoint(uart)) {
+            return false;
+        }
     }
 
     for (const auto &conf : config.udp_configs) {
@@ -386,20 +395,32 @@ bool Mainloop::add_endpoints(const Configuration &config)
             return false;
         }
 
-        g_endpoints.emplace_back(udp);
-        auto endpoint = g_endpoints.back();
-        this->add_fd(endpoint->fd, endpoint.get(), EPOLLIN);
+        if (!add_endpoint(udp)) {
+            return false;
+        }
     }
 
     // Create TCP endpoints
     for (const auto &conf : config.tcp_configs) {
         auto tcp = std::make_shared<TcpEndpoint>(conf.name);
 
-        if (!tcp->setup(conf)) { // handles reconnect and add_fd
-            return false;        // only on fatal errors
+        if (!tcp->setup(conf)) {
+            return false; // only on fatal errors
         }
 
-        g_endpoints.emplace_back(tcp);
+        if (!add_endpoint(tcp)) {
+            return false;
+        }
+    }
+
+    // Create the virtual endpoint
+    auto virtual_endpoint = std::make_shared<VirtualEndpoint>();
+    if (!virtual_endpoint->start()) {
+        log_error("Could not start virtual endpoint");
+        return false;
+    }
+    if (!add_endpoint(virtual_endpoint)) {
+        return false;
     }
 
     // Link grouped endpoints together
@@ -439,12 +460,16 @@ bool Mainloop::add_endpoints(const Configuration &config)
             // no default case on purpose
         }
         this->_log_endpoint->mark_unfinished_logs();
-        g_endpoints.emplace_back(this->_log_endpoint);
+        if (!add_endpoint(this->_log_endpoint)) {
+            return false;
+        }
 
         if (conf.log_telemetry) {
             auto tlog_endpoint = std::make_shared<TLog>(conf);
             tlog_endpoint->mark_unfinished_logs();
-            g_endpoints.emplace_back(tlog_endpoint);
+            if (!add_endpoint(tlog_endpoint)) {
+                return false;
+            }
         }
     }
 

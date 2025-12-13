@@ -35,6 +35,7 @@
 #define ENDPOINT_TYPE_UDP  "UDP"
 #define ENDPOINT_TYPE_TCP  "TCP"
 #define ENDPOINT_TYPE_LOG  "Log"
+#define ENDPOINT_TYPE_VIRTUAL "Virtual"
 
 struct UartEndpointConfig {
     std::string name;
@@ -289,6 +290,29 @@ private:
     std::vector<uint8_t> _blocked_incoming_src_comps;
     std::vector<uint8_t> _allowed_incoming_src_systems;
     std::vector<uint8_t> _blocked_incoming_src_systems;
+};
+
+class VirtualEndpoint : public Endpoint {
+public:
+    static constexpr uint8_t SYSTEM_ID = 254;
+    static constexpr uint8_t COMPONENT_ID = MAV_COMP_ID_AUTOPILOT1;
+
+    VirtualEndpoint(std::string name = "virtual");
+
+    bool start();
+    void stop();
+
+    int write_msg(const struct buffer *pbuf) override;
+    int flush_pending_msgs() override { return 0; }
+
+protected:
+    ssize_t _read_msg(uint8_t *buf, size_t len) override;
+
+private:
+    bool _heartbeat_timeout();
+    bool _send_heartbeat();
+
+    Timeout *_heartbeat = nullptr;
 };
 
 class UartEndpoint : public Endpoint {

@@ -721,6 +721,99 @@ void Endpoint::log_aggregate(unsigned int interval_sec)
     }
 }
 
+VirtualEndpoint::VirtualEndpoint(std::string name)
+    : Endpoint{ENDPOINT_TYPE_VIRTUAL, std::move(name)}
+{
+    _add_sys_comp_id(SYSTEM_ID, COMPONENT_ID);
+}
+
+bool VirtualEndpoint::start()
+{
+    if (_heartbeat != nullptr) {
+        return true;
+    }
+
+    _send_heartbeat();
+    _heartbeat = Mainloop::get_instance().add_timeout(
+        MSEC_PER_SEC,
+        [](void *data) { return static_cast<VirtualEndpoint *>(data)->_heartbeat_timeout(); },
+        this);
+
+    return _heartbeat != nullptr;
+}
+
+void VirtualEndpoint::stop()
+{
+    if (_heartbeat == nullptr) {
+        return;
+    }
+
+    Mainloop::get_instance().del_timeout(_heartbeat);
+    _heartbeat = nullptr;
+}
+
+bool VirtualEndpoint::_send_heartbeat()
+{
+    mavlink_message_t msg = {};
+    uint8_t data[MAVLINK_MAX_PACKET_LEN] = {};
+    struct buffer buf = {};
+
+    mavlink_msg_heartbeat_pack(SYSTEM_ID,
+                               COMPONENT_ID,
+                               &msg,
+                               MAV_TYPE_GENERIC,
+                               MAV_AUTOPILOT_INVALID,
+                               0,
+                               0,
+                               MAV_STATE_STANDBY);
+
+    buf.data = data;
+    buf.len = mavlink_msg_to_send_buffer(data, &msg);
+    buf.curr.msg_id = msg.msgid;
+    buf.curr.target_sysid = 0;
+    buf.curr.target_compid = MAV_COMP_ID_ALL;
+    buf.curr.src_sysid = msg.sysid;
+    buf.curr.src_compid = msg.compid;
+    buf.curr.payload_len = msg.len;
+    buf.curr.payload = reinterpret_cast<uint8_t *>(msg.payload64);
+
+    Mainloop::get_instance().route_msg(&buf);
+
+    _stat.read.total++;
+    _stat.read.handled++;
+    _stat.read.handled_bytes += buf.len;
+
+    return true;
+}
+
+bool VirtualEndpoint::_heartbeat_timeout()
+{
+    return _send_heartbeat();
+}
+
+ssize_t VirtualEndpoint::_read_msg(uint8_t *, size_t)
+{
+    return -EAGAIN;
+}
+
+int VirtualEndpoint::write_msg(const struct buffer *pbuf)
+{
+    _stat.write.total++;
+    _stat.write.bytes += pbuf->len;
+
+    log_trace("%s [%d]%s: received message %u to %d/%d from %u/%u",
+              _type.c_str(),
+              fd,
+              _name.c_str(),
+              pbuf->curr.msg_id,
+              pbuf->curr.target_sysid,
+              pbuf->curr.target_compid,
+              pbuf->curr.src_sysid,
+              pbuf->curr.src_compid);
+
+    return pbuf->len;
+}
+
 UartEndpoint::UartEndpoint(std::string name)
     : Endpoint{ENDPOINT_TYPE_UART, std::move(name)}
 {
@@ -1510,7 +1603,6 @@ bool TcpEndpoint::setup(TcpEndpointConfig conf)
         return true;
     }
 
-    Mainloop::get_instance().add_fd(fd, this, EPOLLIN);
     return true;
 }
 

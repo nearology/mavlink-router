@@ -733,6 +733,10 @@ bool VirtualEndpoint::start()
         return true;
     }
 
+    if (!_open_serial()) {
+        return false;
+    }
+
     _send_heartbeat();
     _heartbeat = Mainloop::get_instance().add_timeout(
         MSEC_PER_SEC,
@@ -744,6 +748,11 @@ bool VirtualEndpoint::start()
 
 void VirtualEndpoint::stop()
 {
+    if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+    }
+
     if (_heartbeat == nullptr) {
         return;
     }
@@ -786,6 +795,293 @@ bool VirtualEndpoint::_send_heartbeat()
     return true;
 }
 
+bool VirtualEndpoint::_open_serial()
+{
+    if (fd >= 0) {
+        return true;
+    }
+
+    fd = ::open(_serial_path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        log_error("VirtualEndpoint: Could not open %s (%m)", _serial_path.c_str());
+        return false;
+    }
+
+    if (reset_uart(fd) < 0) {
+        log_error("VirtualEndpoint: Could not reset uart on %s", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    struct termios2 tc;
+    bzero(&tc, sizeof(tc));
+
+    if (ioctl(fd, TCGETS2, &tc) == -1) {
+        log_error("VirtualEndpoint: Could not get termios2 on %s (%m)", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    tc.c_cflag &= ~(CBAUD);
+    tc.c_cflag |= BOTHER;
+    tc.c_ispeed = _serial_baudrate;
+    tc.c_ospeed = _serial_baudrate;
+
+    tc.c_iflag &= ~(IGNBRK | BRKINT | ICRNL | INLCR | PARMRK | INPCK | ISTRIP | IXON);
+    tc.c_oflag &= ~(OCRNL | ONLCR | ONLRET | ONOCR | OFILL | OPOST);
+    tc.c_lflag &= ~(ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | ECHONL | ICANON | IEXTEN | ISIG);
+    tc.c_lflag &= ~(TOSTOP);
+    tc.c_cflag &= ~(CRTSCTS);
+    tc.c_cflag &= ~(CSIZE | PARENB);
+    tc.c_cflag |= CLOCAL;
+    tc.c_cflag |= CS8;
+    tc.c_cc[VMIN] = 0;
+    tc.c_cc[VTIME] = 0;
+
+    if (ioctl(fd, TCSETS2, &tc) == -1) {
+        log_error("VirtualEndpoint: Could not set terminal attributes on %s (%m)",
+                  _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    if (ioctl(fd, TCFLSH, TCIFLUSH) == -1) {
+        log_error("VirtualEndpoint: Could not flush terminal on %s (%m)", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    log_info("VirtualEndpoint: Listening for GNSS NMEA on %s @ %u baud",
+             _serial_path.c_str(),
+             _serial_baudrate);
+
+    return true;
+}
+
+void VirtualEndpoint::_send_message(const mavlink_message_t &msg,
+                                    int target_sysid,
+                                    int target_compid)
+{
+    uint8_t data[MAVLINK_MAX_PACKET_LEN] = {};
+    struct buffer buf = {};
+
+    buf.data = data;
+    buf.len = mavlink_msg_to_send_buffer(data, &msg);
+    buf.curr.msg_id = msg.msgid;
+    buf.curr.target_sysid = target_sysid;
+    buf.curr.target_compid = target_compid;
+    buf.curr.src_sysid = msg.sysid;
+    buf.curr.src_compid = msg.compid;
+    buf.curr.payload_len = msg.len;
+    buf.curr.payload = nullptr;
+
+    Mainloop::get_instance().route_msg(&buf);
+
+    _stat.read.total++;
+    _stat.read.handled++;
+    _stat.read.handled_bytes += buf.len;
+}
+
+void VirtualEndpoint::_send_statustext(const std::string &text, uint8_t severity)
+{
+    mavlink_message_t msg = {};
+    char buf[51] = {};
+
+    size_t len = text.size();
+    if (len > 50) {
+        len = 50;
+    }
+    memcpy(buf, text.c_str(), len);
+
+    mavlink_msg_statustext_pack(SYSTEM_ID, COMPONENT_ID, &msg, severity, buf, 0, 0);
+    _send_message(msg, 0, MAV_COMP_ID_ALL);
+}
+
+void VirtualEndpoint::_handle_gntxt(const std::vector<std::string> &fields)
+{
+    if (fields.size() < 5) {
+        return;
+    }
+
+    const std::string &text = fields[4];
+    _send_statustext(text, MAV_SEVERITY_INFO);
+}
+
+static bool _nmea_parse_latlon(const std::string &val,
+                               const std::string &hemisphere,
+                               int32_t &out_e7)
+{
+    if (val.empty() || hemisphere.empty()) {
+        return false;
+    }
+
+    char *end = nullptr;
+    double v = strtod(val.c_str(), &end);
+    if (end == val.c_str()) {
+        return false;
+    }
+
+    double deg = floor(v / 100.0);
+    double min = v - deg * 100.0;
+    double res = deg + min / 60.0;
+
+    if (hemisphere == "S" || hemisphere == "W") {
+        res = -res;
+    }
+
+    out_e7 = static_cast<int32_t>(res * 1e7);
+    return true;
+}
+
+void VirtualEndpoint::_handle_gga(const std::vector<std::string> &fields)
+{
+    if (fields.size() < 10) {
+        return;
+    }
+
+    int32_t lat = 0;
+    int32_t lon = 0;
+    if (!_nmea_parse_latlon(fields[2], fields[3], lat)) {
+        return;
+    }
+    if (!_nmea_parse_latlon(fields[4], fields[5], lon)) {
+        return;
+    }
+
+    int quality = atoi(fields[6].c_str());
+    if (quality <= 0) {
+        _fix_type = GPS_FIX_TYPE_NO_FIX;
+    } else {
+        _fix_type = GPS_FIX_TYPE_3D_FIX;
+    }
+
+    _lat_e7 = lat;
+    _lon_e7 = lon;
+    _has_position = true;
+
+    if (!fields[7].empty()) {
+        _satellites = static_cast<uint8_t>(atoi(fields[7].c_str()));
+    }
+
+    if (!fields[8].empty()) {
+        double hdop = atof(fields[8].c_str());
+        _hdop_x100 = static_cast<uint16_t>(hdop * 100.0);
+    }
+
+    if (!fields[9].empty()) {
+        double alt = atof(fields[9].c_str());
+        _alt_mm = static_cast<int32_t>(alt * 1000.0);
+    }
+
+    _send_gps_raw();
+}
+
+void VirtualEndpoint::_handle_rmc(const std::vector<std::string> &fields)
+{
+    if (fields.size() < 7) {
+        return;
+    }
+
+    if (fields[2] != "A") {
+        _fix_type = GPS_FIX_TYPE_NO_FIX;
+        return;
+    }
+
+    int32_t lat = 0;
+    int32_t lon = 0;
+    if (!_nmea_parse_latlon(fields[3], fields[4], lat)) {
+        return;
+    }
+    if (!_nmea_parse_latlon(fields[5], fields[6], lon)) {
+        return;
+    }
+
+    _lat_e7 = lat;
+    _lon_e7 = lon;
+    _has_position = true;
+    _fix_type = GPS_FIX_TYPE_3D_FIX;
+
+    _send_gps_raw();
+}
+
+void VirtualEndpoint::_handle_nmea_line(const std::string &line)
+{
+    if (line.empty() || line[0] != '$') {
+        return;
+    }
+
+    std::string payload;
+    auto asterisk = line.find('*');
+    if (asterisk != std::string::npos) {
+        payload = line.substr(1, asterisk - 1);
+    } else {
+        payload = line.substr(1);
+    }
+
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= payload.size()) {
+        auto comma = payload.find(',', start);
+        if (comma == std::string::npos) {
+            fields.emplace_back(payload.substr(start));
+            break;
+        }
+        fields.emplace_back(payload.substr(start, comma - start));
+        start = comma + 1;
+    }
+
+    if (fields.empty()) {
+        return;
+    }
+
+    const std::string &sentence = fields[0];
+    if (sentence.size() >= 5 && sentence.compare(sentence.size() - 5, 5, "GNTXT") == 0) {
+        _handle_gntxt(fields);
+    } else if (sentence.size() >= 3 && sentence.compare(sentence.size() - 3, 3, "GGA") == 0) {
+        _handle_gga(fields);
+    } else if (sentence.size() >= 3 && sentence.compare(sentence.size() - 3, 3, "RMC") == 0) {
+        _handle_rmc(fields);
+    }
+}
+
+void VirtualEndpoint::_send_gps_raw()
+{
+    if (!_has_position) {
+        return;
+    }
+
+    mavlink_message_t msg = {};
+    uint64_t now = now_usec();
+
+    uint16_t eph = _hdop_x100 > 0 ? _hdop_x100 : UINT16_MAX;
+
+    mavlink_msg_gps_raw_int_pack(SYSTEM_ID,
+                                 COMPONENT_ID,
+                                 &msg,
+                                 now,
+                                 _fix_type,
+                                 _lat_e7,
+                                 _lon_e7,
+                                 _alt_mm,
+                                 eph,
+                                 UINT16_MAX,
+                                 UINT16_MAX,
+                                 UINT16_MAX,
+                                 _satellites ? _satellites : UINT8_MAX,
+                                 _alt_mm,
+                                 UINT32_MAX,
+                                 UINT32_MAX,
+                                 UINT32_MAX,
+                                 UINT32_MAX,
+                                 UINT16_MAX);
+
+    _send_message(msg, 0, MAV_COMP_ID_ALL);
+}
+
 bool VirtualEndpoint::_heartbeat_timeout()
 {
     return _send_heartbeat();
@@ -812,6 +1108,42 @@ int VirtualEndpoint::write_msg(const struct buffer *pbuf)
               pbuf->curr.src_compid);
 
     return pbuf->len;
+}
+
+int VirtualEndpoint::handle_read()
+{
+    if (fd < 0) {
+        return -EINVAL;
+    }
+
+    char buf[256];
+    for (;;) {
+        ssize_t r = ::read(fd, buf, sizeof(buf));
+        if (r == -1 && errno == EAGAIN) {
+            break;
+        }
+        if (r <= 0) {
+            if (r < 0) {
+                log_error("VirtualEndpoint: Error reading GNSS data (%m)");
+                return -errno;
+            }
+            break;
+        }
+
+        _nmea_buffer.append(buf, static_cast<size_t>(r));
+
+        size_t pos;
+        while ((pos = _nmea_buffer.find('\n')) != std::string::npos) {
+            std::string line = _nmea_buffer.substr(0, pos);
+            _nmea_buffer.erase(0, pos + 1);
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            _handle_nmea_line(line);
+        }
+    }
+
+    return 0;
 }
 
 UartEndpoint::UartEndpoint(std::string name)

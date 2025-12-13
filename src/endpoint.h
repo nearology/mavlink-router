@@ -302,6 +302,8 @@ public:
     bool start();
     void stop();
 
+    int handle_read() override;
+
     int write_msg(const struct buffer *pbuf) override;
     int flush_pending_msgs() override { return 0; }
 
@@ -309,10 +311,31 @@ protected:
     ssize_t _read_msg(uint8_t *buf, size_t len) override;
 
 private:
+    bool _open_serial();
+    void _handle_nmea_line(const std::string &line);
+    void _handle_gntxt(const std::vector<std::string> &fields);
+    void _handle_gga(const std::vector<std::string> &fields);
+    void _handle_rmc(const std::vector<std::string> &fields);
+    void _send_gps_raw();
+    void _send_statustext(const std::string &text, uint8_t severity);
+    void _send_message(const mavlink_message_t &msg, int target_sysid, int target_compid);
+
     bool _heartbeat_timeout();
     bool _send_heartbeat();
 
     Timeout *_heartbeat = nullptr;
+
+    std::string _serial_path{"/dev/ttyACM0"};
+    unsigned int _serial_baudrate{115200U};
+    std::string _nmea_buffer;
+
+    bool _has_position{false};
+    int32_t _lat_e7{0};
+    int32_t _lon_e7{0};
+    int32_t _alt_mm{0};
+    uint8_t _fix_type{0};
+    uint8_t _satellites{0};
+    uint16_t _hdop_x100{0};
 };
 
 class UartEndpoint : public Endpoint {

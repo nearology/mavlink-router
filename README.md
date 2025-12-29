@@ -117,6 +117,9 @@ line options. The most important facts are:
   - The last parameter (without a key) can either be one UART device or an UDP
     connection. This UDP endpoint will be started in `server` mode (waiting for
     an incoming connection)!
+  - The virtual GNSS input for the built-in virtual vehicle can be configured
+    either via the `[General]` section in the config file (`VirtualGnssDevice`,
+    `VirtualGnssBaud`) or via the CLI option `-n/--virtual-gnss <dev[:baud]>`.
 
 
 To route mavlink packets from UART `ttyS1` to 2 other UDP endpoints, use the

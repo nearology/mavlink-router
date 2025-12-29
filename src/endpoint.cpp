@@ -721,8 +721,12 @@ void Endpoint::log_aggregate(unsigned int interval_sec)
     }
 }
 
-VirtualEndpoint::VirtualEndpoint(std::string name)
-    : Endpoint{ENDPOINT_TYPE_VIRTUAL, std::move(name)}
+VirtualEndpoint::VirtualEndpoint(const std::string &name,
+                                 const std::string &serial_path,
+                                 unsigned int serial_baudrate)
+    : Endpoint{ENDPOINT_TYPE_VIRTUAL, name}
+    , _serial_path{serial_path}
+    , _serial_baudrate{serial_baudrate}
 {
     _add_sys_comp_id(SYSTEM_ID, COMPONENT_ID);
 }

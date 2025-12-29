@@ -88,6 +88,15 @@
 # Default: 0 (disabled)
 #SnifferSysid=254
 
+# Configure the virtual GNSS endpoint used by the virtual vehicle.
+# Serial device from which GNSS NMEA sentences are read.
+# Default: /dev/ttyACM0
+#VirtualGnssDevice = /dev/ttyACM0
+
+# Baudrate of the virtual GNSS serial device.
+# Default: 115200
+#VirtualGnssBaud = 115200
+
 # Log raw mavlink telemetry data as tlog files to disc. Only works if Logging path 
 # is defined. This also uses LogMode to control the recording.
 # Valid values: <true>, <false>

@@ -414,7 +414,10 @@ bool Mainloop::add_endpoints(const Configuration &config)
     }
 
     // Create the virtual endpoint
-    auto virtual_endpoint = std::make_shared<VirtualEndpoint>();
+    auto virtual_endpoint = std::make_shared<VirtualEndpoint>(
+        "virtual",
+        config.virtual_endpoint_serial_path,
+        static_cast<unsigned int>(config.virtual_endpoint_serial_baudrate));
     if (!virtual_endpoint->start()) {
         log_error("Could not start virtual endpoint");
         return false;

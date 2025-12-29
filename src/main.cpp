@@ -54,9 +54,10 @@ static const struct option long_options[] = {{"endpoints", required_argument, nu
                                              {"verbose", no_argument, nullptr, 'v'},
                                              {"version", no_argument, nullptr, 'V'},
                                              {"sniffer-sysid", required_argument, nullptr, 's'},
+                                             {"virtual-gnss", required_argument, nullptr, 'n'},
                                              {}};
 
-static const char *short_options = "he:rt:c:d:l:p:g:vV:s:T:y";
+static const char *short_options = "he:rt:c:d:l:p:g:vV:s:T:yn:";
 
 static void help(FILE *fp)
 {
@@ -87,6 +88,7 @@ static void help(FILE *fp)
         "  -v --verbose                 Verbose. Same as --debug-log-level=debug\n"
         "  -V --version                 Show version\n"
         "  -s --sniffer-sysid           Sysid that all messages are sent to.\n"
+        "  -n --virtual-gnss <dev[:baud]> Virtual GNSS serial device and optional baudrate\n"
         "  -y --syslog                  Use syslog output instead of stderr\n"
         "  -h --help                    Print this message\n",
         program_invocation_short_name);
@@ -303,6 +305,24 @@ static int parse_argv(int argc, char *argv[], Configuration &config)
             free(ip);
             break;
         }
+        case 'n': {
+            char *device;
+            unsigned long baudrate;
+
+            if (split_on_last_colon(optarg, &device, &baudrate) < 0) {
+                log_error("Invalid baudrate in argument: %s", optarg);
+                help(stderr);
+                return -EINVAL;
+            }
+
+            config.virtual_endpoint_serial_path = std::string(device);
+            if (baudrate != ULONG_MAX) {
+                config.virtual_endpoint_serial_baudrate = baudrate;
+            }
+
+            free(device);
+            break;
+        }
         case 'c':
         case 'd':
         case 'y':
@@ -436,11 +456,13 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
     struct ConfFile::section_iter iter;
     // clang-format off
     static const ConfFile::OptionsTable global_option_table[] = {
-        {"TcpServerPort",       false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, tcp_port)},
-        {"ReportStats",         false, ConfFile::parse_bool,    OPTIONS_TABLE_STRUCT_FIELD(Configuration, report_msg_statistics)},
-        {"DebugLogLevel",       false, parse_log_level,         OPTIONS_TABLE_STRUCT_FIELD(Configuration, debug_log_level)},
-        {"DeduplicationPeriod", false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, dedup_period_ms)},
-        {"SnifferSysid",    false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, sniffer_sysid)},
+        {"TcpServerPort",       false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, tcp_port)},
+        {"ReportStats",         false, ConfFile::parse_bool,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, report_msg_statistics)},
+        {"DebugLogLevel",       false, parse_log_level,           OPTIONS_TABLE_STRUCT_FIELD(Configuration, debug_log_level)},
+        {"DeduplicationPeriod", false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, dedup_period_ms)},
+        {"SnifferSysid",        false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, sniffer_sysid)},
+        {"VirtualGnssDevice",   false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_path)},
+        {"VirtualGnssBaud",     false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_baudrate)},
         {}
     };
     // clang-format on

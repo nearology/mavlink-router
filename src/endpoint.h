@@ -297,7 +297,9 @@ public:
     static constexpr uint8_t SYSTEM_ID = 254;
     static constexpr uint8_t COMPONENT_ID = MAV_COMP_ID_AUTOPILOT1;
 
-    VirtualEndpoint(std::string name = "virtual");
+    VirtualEndpoint(const std::string &name,
+                    const std::string &serial_path,
+                    unsigned int serial_baudrate);
 
     bool start();
     void stop();
@@ -325,8 +327,8 @@ private:
 
     Timeout *_heartbeat = nullptr;
 
-    std::string _serial_path{"/dev/ttyACM0"};
-    unsigned int _serial_baudrate{115200U};
+    std::string _serial_path;
+    unsigned int _serial_baudrate;
     std::string _nmea_buffer;
 
     bool _has_position{false};

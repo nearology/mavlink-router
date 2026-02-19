@@ -41,6 +41,11 @@
 
 extern const char *BUILD_VERSION;
 
+enum {
+    OPT_DEBUG_SBUS = 1000,
+    OPT_SBUS,
+};
+
 static const struct option long_options[] = {{"endpoints", required_argument, nullptr, 'e'},
                                              {"conf-file", required_argument, nullptr, 'c'},
                                              {"conf-dir", required_argument, nullptr, 'd'},
@@ -55,6 +60,8 @@ static const struct option long_options[] = {{"endpoints", required_argument, nu
                                              {"version", no_argument, nullptr, 'V'},
                                              {"sniffer-sysid", required_argument, nullptr, 's'},
                                              {"virtual-gnss", required_argument, nullptr, 'n'},
+                                             {"sbus", required_argument, nullptr, OPT_SBUS},
+                                             {"debug-sbus", no_argument, nullptr, OPT_DEBUG_SBUS},
                                              {}};
 
 static const char *short_options = "he:rt:c:d:l:p:g:vV:s:T:yn:";
@@ -89,6 +96,8 @@ static void help(FILE *fp)
         "  -V --version                 Show version\n"
         "  -s --sniffer-sysid           Sysid that all messages are sent to.\n"
         "  -n --virtual-gnss <dev[:baud]> Virtual GNSS serial device and optional baudrate\n"
+        "     --sbus <dev:baud>         SBUS serial input device and baudrate (fixed 8E2)\n"
+        "     --debug-sbus              Print parsed SBUS channel values\n"
         "  -y --syslog                  Use syslog output instead of stderr\n"
         "  -h --help                    Print this message\n",
         program_invocation_short_name);
@@ -321,6 +330,32 @@ static int parse_argv(int argc, char *argv[], Configuration &config)
             }
 
             free(device);
+            break;
+        }
+        case OPT_SBUS: {
+            char *device;
+            unsigned long baudrate;
+
+            if (split_on_last_colon(optarg, &device, &baudrate) < 0) {
+                log_error("Invalid SBUS argument: %s", optarg);
+                help(stderr);
+                return -EINVAL;
+            }
+
+            if (baudrate == ULONG_MAX) {
+                log_error("SBUS baudrate must be specified as <device>:<baudrate>");
+                free(device);
+                help(stderr);
+                return -EINVAL;
+            }
+
+            config.sbus_serial_path = std::string(device);
+            config.sbus_serial_baudrate = baudrate;
+            free(device);
+            break;
+        }
+        case OPT_DEBUG_SBUS: {
+            config.debug_sbus = true;
             break;
         }
         case 'c':

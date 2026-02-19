@@ -121,6 +121,11 @@ line options. The most important facts are:
     default and can be enabled by configuring a serial device either via the
     `[General]` section in the config file (`VirtualGnssDevice`,
     `VirtualGnssBaud`) or via the CLI option `-n/--virtual-gnss <dev[:baud]>`.
+  - SBUS input can be enabled using `--sbus <dev:baud>` (example:
+    `--sbus /dev/ttyS1:115200`).
+    Serial framing remains fixed at `8E2` and is not configurable.
+    Parsed data is converted to MAVLink `RC_CHANNELS_OVERRIDE` messages.
+    SBUS parsing debug output can be enabled with `--debug-sbus`.
 
 
 To route mavlink packets from UART `ttyS1` to 2 other UDP endpoints, use the

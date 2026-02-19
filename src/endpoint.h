@@ -20,6 +20,7 @@
 #include <common/conf_file.h>
 #include <common/mavlink.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -36,6 +37,7 @@
 #define ENDPOINT_TYPE_TCP  "TCP"
 #define ENDPOINT_TYPE_LOG  "Log"
 #define ENDPOINT_TYPE_VIRTUAL "Virtual"
+#define ENDPOINT_TYPE_SBUS "SBUS"
 
 struct UartEndpointConfig {
     std::string name;
@@ -338,6 +340,39 @@ private:
     uint8_t _fix_type{0};
     uint8_t _satellites{0};
     uint16_t _hdop_x100{0};
+};
+
+class SBusEndpoint : public Endpoint {
+public:
+    static constexpr uint8_t SYSTEM_ID = 255;
+    static constexpr uint8_t COMPONENT_ID = 1;
+
+    SBusEndpoint(const std::string &name,
+                 const std::string &serial_path,
+                 unsigned int serial_baudrate,
+                 bool debug_channels);
+    ~SBusEndpoint() override = default;
+
+    bool start();
+
+    int handle_read() override;
+    int write_msg(const struct buffer *pbuf) override;
+    int flush_pending_msgs() override { return 0; }
+
+protected:
+    ssize_t _read_msg(uint8_t *buf, size_t len) override;
+
+private:
+    bool _open_serial();
+    bool _parse_stream();
+    uint16_t _sbus_to_pwm(uint16_t value) const;
+    void _handle_frame(const std::array<uint8_t, 25> &frame);
+    void _send_rc_override(const std::array<uint16_t, 18> &channels);
+
+    std::string _serial_path;
+    unsigned int _serial_baudrate;
+    bool _debug_channels{false};
+    std::vector<uint8_t> _stream_buffer{};
 };
 
 class UartEndpoint : public Endpoint {

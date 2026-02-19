@@ -52,6 +52,18 @@
 
 #define UART_BAUD_RETRY_SEC 5
 
+namespace {
+constexpr uint8_t SBUS_START_BYTE = 0x0f;
+constexpr uint8_t SBUS_END_BYTE = 0x00;
+constexpr uint8_t SBUS_END_BYTE_ALT_1 = 0x04;
+constexpr uint8_t SBUS_END_BYTE_ALT_2 = 0x14;
+constexpr uint8_t SBUS_END_BYTE_ALT_3 = 0x24;
+constexpr uint16_t SBUS_MIN = 1000U;
+constexpr uint16_t SBUS_MAX = 2000U;
+constexpr uint8_t SBUS_TARGET_SYSTEM_ID = 0;
+constexpr uint8_t SBUS_TARGET_COMPONENT_ID = MAV_COMP_ID_AUTOPILOT1;
+} // namespace
+
 uint16_t Endpoint::sniffer_sysid = 0;
 
 // clang-format off
@@ -1144,6 +1156,289 @@ int VirtualEndpoint::handle_read()
                 line.pop_back();
             }
             _handle_nmea_line(line);
+        }
+    }
+
+    return 0;
+}
+
+SBusEndpoint::SBusEndpoint(const std::string &name,
+                           const std::string &serial_path,
+                           unsigned int serial_baudrate,
+                           bool debug_channels)
+    : Endpoint{ENDPOINT_TYPE_SBUS, name}
+    , _serial_path{serial_path}
+    , _serial_baudrate{serial_baudrate}
+    , _debug_channels{debug_channels}
+{
+    _add_sys_comp_id(SYSTEM_ID, COMPONENT_ID);
+}
+
+bool SBusEndpoint::start()
+{
+    return _open_serial();
+}
+
+bool SBusEndpoint::_open_serial()
+{
+    if (fd >= 0) {
+        return true;
+    }
+
+    fd = ::open(_serial_path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        log_error("SBusEndpoint: Could not open %s (%m)", _serial_path.c_str());
+        return false;
+    }
+
+    if (reset_uart(fd) < 0) {
+        log_error("SBusEndpoint: Could not reset uart on %s", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    struct termios2 tc;
+    bzero(&tc, sizeof(tc));
+
+    if (ioctl(fd, TCGETS2, &tc) == -1) {
+        log_error("SBusEndpoint: Could not get termios2 on %s (%m)", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    tc.c_cflag &= ~(CBAUD);
+    tc.c_cflag |= BOTHER;
+    tc.c_ispeed = _serial_baudrate;
+    tc.c_ospeed = _serial_baudrate;
+
+    tc.c_iflag &= ~(IGNBRK | BRKINT | ICRNL | INLCR | PARMRK | ISTRIP | IXON | IXOFF | IXANY);
+    tc.c_iflag |= INPCK;
+    tc.c_oflag &= ~(OCRNL | ONLCR | ONLRET | ONOCR | OFILL | OPOST);
+    tc.c_lflag &= ~(ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | ECHONL | ICANON | IEXTEN | ISIG);
+    tc.c_lflag &= ~(TOSTOP);
+    tc.c_cflag &= ~(CRTSCTS | CSIZE | PARODD);
+    tc.c_cflag |= CLOCAL | CREAD | CS8 | PARENB | CSTOPB;
+    tc.c_cc[VMIN] = 0;
+    tc.c_cc[VTIME] = 0;
+
+    if (ioctl(fd, TCSETS2, &tc) == -1) {
+        log_error("SBusEndpoint: Could not set terminal attributes on %s (%m)",
+                  _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    if (ioctl(fd, TCFLSH, TCIFLUSH) == -1) {
+        log_error("SBusEndpoint: Could not flush terminal on %s (%m)", _serial_path.c_str());
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+
+    log_info("SBusEndpoint: Listening for SBUS on %s @ %u baud (8E2)",
+             _serial_path.c_str(),
+             _serial_baudrate);
+
+    return true;
+}
+
+ssize_t SBusEndpoint::_read_msg(uint8_t *, size_t)
+{
+    return -EAGAIN;
+}
+
+int SBusEndpoint::write_msg(const struct buffer *pbuf)
+{
+    _stat.write.total++;
+    _stat.write.bytes += pbuf->len;
+
+    log_trace("SBusEndpoint [%d]%s: received message %u to %d/%d from %u/%u",
+              fd,
+              _name.c_str(),
+              pbuf->curr.msg_id,
+              pbuf->curr.target_sysid,
+              pbuf->curr.target_compid,
+              pbuf->curr.src_sysid,
+              pbuf->curr.src_compid);
+
+    return pbuf->len;
+}
+
+uint16_t SBusEndpoint::_sbus_to_pwm(uint16_t value) const
+{
+    if (value < SBUS_MIN) {
+        value = SBUS_MIN;
+    } else if (value > SBUS_MAX) {
+        value = SBUS_MAX;
+    }
+
+    const uint32_t scaled = (uint32_t)(value - SBUS_MIN) * 1000U;
+    return (uint16_t)(1000U + ((scaled + ((SBUS_MAX - SBUS_MIN) / 2U)) / (SBUS_MAX - SBUS_MIN)));
+}
+
+void SBusEndpoint::_send_rc_override(const std::array<uint16_t, 18> &channels)
+{
+    mavlink_message_t msg = {};
+    mavlink_rc_channels_override_t rc = {};
+    uint8_t data[MAVLINK_MAX_PACKET_LEN] = {};
+    struct buffer buf = {};
+
+    rc.target_system = SBUS_TARGET_SYSTEM_ID;
+    rc.target_component = SBUS_TARGET_COMPONENT_ID;
+    rc.chan1_raw = channels[0];
+    rc.chan2_raw = channels[1];
+    rc.chan3_raw = channels[2];
+    rc.chan4_raw = channels[3];
+    rc.chan5_raw = channels[4];
+    rc.chan6_raw = channels[5];
+    rc.chan7_raw = channels[6];
+    rc.chan8_raw = channels[7];
+    rc.chan9_raw = channels[8];
+    rc.chan10_raw = channels[9];
+    rc.chan11_raw = channels[10];
+    rc.chan12_raw = channels[11];
+    rc.chan13_raw = channels[12];
+    rc.chan14_raw = channels[13];
+    rc.chan15_raw = channels[14];
+    rc.chan16_raw = channels[15];
+    rc.chan17_raw = channels[16];
+    rc.chan18_raw = channels[17];
+
+    mavlink_msg_rc_channels_override_encode(SYSTEM_ID, COMPONENT_ID, &msg, &rc);
+
+    buf.data = data;
+    buf.len = mavlink_msg_to_send_buffer(data, &msg);
+    buf.curr.msg_id = msg.msgid;
+    buf.curr.target_sysid = rc.target_system;
+    buf.curr.target_compid = rc.target_component;
+    buf.curr.src_sysid = msg.sysid;
+    buf.curr.src_compid = msg.compid;
+    buf.curr.payload_len = msg.len;
+    buf.curr.payload = reinterpret_cast<uint8_t *>(msg.payload64);
+
+    Mainloop::get_instance().route_msg(&buf);
+
+    _stat.read.total++;
+    _stat.read.handled++;
+    _stat.read.handled_bytes += buf.len;
+}
+
+void SBusEndpoint::_handle_frame(const std::array<uint8_t, 25> &frame)
+{
+    std::array<uint16_t, 18> raw_channels{};
+    std::array<uint16_t, 18> channels{};
+    const uint8_t flags = frame[23];
+
+    raw_channels[0] = (uint16_t)((((uint16_t)frame[1]) | ((uint16_t)frame[2] << 8)) & 0x07ffU);
+    raw_channels[1] = (uint16_t)((((uint16_t)frame[2] >> 3) | ((uint16_t)frame[3] << 5)) & 0x07ffU);
+    raw_channels[2] = (uint16_t)((((uint16_t)frame[3] >> 6) | ((uint16_t)frame[4] << 2)
+                                  | ((uint16_t)frame[5] << 10))
+                                 & 0x07ffU);
+    raw_channels[3] = (uint16_t)((((uint16_t)frame[5] >> 1) | ((uint16_t)frame[6] << 7)) & 0x07ffU);
+    raw_channels[4] = (uint16_t)((((uint16_t)frame[6] >> 4) | ((uint16_t)frame[7] << 4)) & 0x07ffU);
+    raw_channels[5] = (uint16_t)((((uint16_t)frame[7] >> 7) | ((uint16_t)frame[8] << 1)
+                                  | ((uint16_t)frame[9] << 9))
+                                 & 0x07ffU);
+    raw_channels[6] = (uint16_t)((((uint16_t)frame[9] >> 2) | ((uint16_t)frame[10] << 6)) & 0x07ffU);
+    raw_channels[7]
+        = (uint16_t)((((uint16_t)frame[10] >> 5) | ((uint16_t)frame[11] << 3)) & 0x07ffU);
+    raw_channels[8]
+        = (uint16_t)((((uint16_t)frame[12]) | ((uint16_t)frame[13] << 8)) & 0x07ffU);
+    raw_channels[9]
+        = (uint16_t)((((uint16_t)frame[13] >> 3) | ((uint16_t)frame[14] << 5)) & 0x07ffU);
+    raw_channels[10] = (uint16_t)((((uint16_t)frame[14] >> 6) | ((uint16_t)frame[15] << 2)
+                                   | ((uint16_t)frame[16] << 10))
+                                  & 0x07ffU);
+    raw_channels[11] = (uint16_t)((((uint16_t)frame[16] >> 1) | ((uint16_t)frame[17] << 7))
+                                  & 0x07ffU);
+    raw_channels[12] = (uint16_t)((((uint16_t)frame[17] >> 4) | ((uint16_t)frame[18] << 4))
+                                  & 0x07ffU);
+    raw_channels[13] = (uint16_t)((((uint16_t)frame[18] >> 7) | ((uint16_t)frame[19] << 1)
+                                   | ((uint16_t)frame[20] << 9))
+                                  & 0x07ffU);
+    raw_channels[14] = (uint16_t)((((uint16_t)frame[20] >> 2) | ((uint16_t)frame[21] << 6))
+                                  & 0x07ffU);
+    raw_channels[15] = (uint16_t)((((uint16_t)frame[21] >> 5) | ((uint16_t)frame[22] << 3))
+                                  & 0x07ffU);
+    raw_channels[16] = (flags & 0x01U) ? SBUS_MAX : SBUS_MIN;
+    raw_channels[17] = (flags & 0x02U) ? SBUS_MAX : SBUS_MIN;
+
+    for (size_t i = 0; i < channels.size(); i++) {
+        channels[i] = _sbus_to_pwm(raw_channels[i]);
+    }
+
+    if (_debug_channels) {
+        printf("SBUS channels:");
+        for (const auto channel : channels) {
+            printf(" %u", channel);
+        }
+        printf(" | frame_lost=%u failsafe=%u\n", (flags & 0x04U) ? 1U : 0U, (flags & 0x08U) ? 1U : 0U);
+        fflush(stdout);
+    }
+
+    _send_rc_override(channels);
+}
+
+bool SBusEndpoint::_parse_stream()
+{
+    auto start_it = std::find(_stream_buffer.begin(), _stream_buffer.end(), SBUS_START_BYTE);
+
+    if (start_it == _stream_buffer.end()) {
+        _stream_buffer.clear();
+        return false;
+    }
+
+    if (start_it != _stream_buffer.begin()) {
+        _stream_buffer.erase(_stream_buffer.begin(), start_it);
+    }
+
+    if (_stream_buffer.size() < 25U) {
+        return false;
+    }
+
+    const uint8_t frame_end = _stream_buffer[24];
+    if (frame_end != SBUS_END_BYTE && frame_end != SBUS_END_BYTE_ALT_1
+        && frame_end != SBUS_END_BYTE_ALT_2 && frame_end != SBUS_END_BYTE_ALT_3) {
+        _stream_buffer.erase(_stream_buffer.begin());
+        return true;
+    }
+
+    std::array<uint8_t, 25> frame{};
+    std::copy_n(_stream_buffer.begin(), frame.size(), frame.begin());
+    _stream_buffer.erase(
+        _stream_buffer.begin(),
+        _stream_buffer.begin() + static_cast<std::vector<uint8_t>::difference_type>(frame.size()));
+
+    _handle_frame(frame);
+    return true;
+}
+
+int SBusEndpoint::handle_read()
+{
+    if (fd < 0) {
+        return -EINVAL;
+    }
+
+    uint8_t buf[128];
+    for (;;) {
+        ssize_t r = ::read(fd, buf, sizeof(buf));
+        if (r == -1 && errno == EAGAIN) {
+            break;
+        }
+        if (r <= 0) {
+            if (r < 0) {
+                log_error("SBusEndpoint: Error reading SBUS data (%m)");
+                return -errno;
+            }
+            break;
+        }
+
+        _stream_buffer.insert(_stream_buffer.end(), buf, buf + static_cast<size_t>(r));
+        while (_parse_stream()) {
+            ;
         }
     }
 

@@ -428,6 +428,21 @@ bool Mainloop::add_endpoints(const Configuration &config)
         }
     }
 
+    // Create the SBUS endpoint (optional)
+    if (!config.sbus_serial_path.empty()) {
+        auto sbus_endpoint = std::make_shared<SBusEndpoint>(
+            "sbus",
+            config.sbus_serial_path,
+            static_cast<unsigned int>(config.sbus_serial_baudrate),
+            config.debug_sbus);
+        if (!sbus_endpoint->start()) {
+            log_warning("Could not start SBUS endpoint on %s. SBUS input will be disabled.",
+                        config.sbus_serial_path.c_str());
+        } else if (!add_endpoint(sbus_endpoint)) {
+            return false;
+        }
+    }
+
     // Link grouped endpoints together
     for (auto e : g_endpoints) {
         if (e->get_group_name().empty()) {

@@ -43,6 +43,7 @@ struct Configuration {
     std::string sbus_serial_path; ///< CLI "sbus"
     unsigned long sbus_serial_baudrate{115200U}; ///< CLI "sbus"
     bool debug_sbus{false}; ///< CLI "debug-sbus"
+    bool sbus_force_forward{false}; ///< conf "SbusForceForward" or CLI "sbus-force-forward"
 
     LogOptions log_config; ///< logging is in General config section, but internally an endpoint
     std::vector<UartEndpointConfig> uart_configs;

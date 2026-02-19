@@ -40,5 +40,6 @@ struct buffer {
         uint8_t src_compid;
         uint8_t payload_len;
         uint8_t *payload;
+        bool force_forward;
     } curr;
 };

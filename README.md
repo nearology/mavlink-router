@@ -125,6 +125,8 @@ line options. The most important facts are:
     `--sbus /dev/ttyS1:115200`).
     Serial framing remains fixed at `8E2` and is not configurable.
     Parsed data is converted to MAVLink `RC_CHANNELS_OVERRIDE` messages.
+    `--sbus-force-forward` can be used to forward SBUS-generated MAVLink
+    messages even before destination sysid discovery.
     SBUS parsing debug output can be enabled with `--debug-sbus`.
 
 

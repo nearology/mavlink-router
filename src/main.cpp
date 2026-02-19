@@ -44,6 +44,7 @@ extern const char *BUILD_VERSION;
 enum {
     OPT_DEBUG_SBUS = 1000,
     OPT_SBUS,
+    OPT_SBUS_FORCE_FORWARD,
 };
 
 static const struct option long_options[] = {{"endpoints", required_argument, nullptr, 'e'},
@@ -61,6 +62,7 @@ static const struct option long_options[] = {{"endpoints", required_argument, nu
                                              {"sniffer-sysid", required_argument, nullptr, 's'},
                                              {"virtual-gnss", required_argument, nullptr, 'n'},
                                              {"sbus", required_argument, nullptr, OPT_SBUS},
+                                             {"sbus-force-forward", no_argument, nullptr, OPT_SBUS_FORCE_FORWARD},
                                              {"debug-sbus", no_argument, nullptr, OPT_DEBUG_SBUS},
                                              {}};
 
@@ -97,6 +99,8 @@ static void help(FILE *fp)
         "  -s --sniffer-sysid           Sysid that all messages are sent to.\n"
         "  -n --virtual-gnss <dev[:baud]> Virtual GNSS serial device and optional baudrate\n"
         "     --sbus <dev:baud>         SBUS serial input device and baudrate (fixed 8E2)\n"
+        "     --sbus-force-forward      Force SBUS-generated MAVLink forwarding without\n"
+        "                               requiring endpoint sysid discovery\n"
         "     --debug-sbus              Print parsed SBUS channel values\n"
         "  -y --syslog                  Use syslog output instead of stderr\n"
         "  -h --help                    Print this message\n",
@@ -354,6 +358,10 @@ static int parse_argv(int argc, char *argv[], Configuration &config)
             free(device);
             break;
         }
+        case OPT_SBUS_FORCE_FORWARD: {
+            config.sbus_force_forward = true;
+            break;
+        }
         case OPT_DEBUG_SBUS: {
             config.debug_sbus = true;
             break;
@@ -498,6 +506,7 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         {"SnifferSysid",        false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, sniffer_sysid)},
         {"VirtualGnssDevice",   false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_path)},
         {"VirtualGnssBaud",     false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_baudrate)},
+        {"SbusForceForward",    false, ConfFile::parse_bool,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, sbus_force_forward)},
         {}
     };
     // clang-format on

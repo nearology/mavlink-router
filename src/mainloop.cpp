@@ -434,7 +434,8 @@ bool Mainloop::add_endpoints(const Configuration &config)
             "sbus",
             config.sbus_serial_path,
             static_cast<unsigned int>(config.sbus_serial_baudrate),
-            config.debug_sbus);
+            config.debug_sbus,
+            config.sbus_force_forward);
         if (!sbus_endpoint->start()) {
             log_warning("Could not start SBUS endpoint on %s. SBUS input will be disabled.",
                         config.sbus_serial_path.c_str());

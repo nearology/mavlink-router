@@ -444,7 +444,14 @@ int Endpoint::read_msg(struct buffer *pbuf)
         msg_id = msg_entry->msgid;
     }
 
-    pbuf->curr = {msg_id, target_sysid, target_compid, src_sysid, src_compid, payload_len, payload};
+    pbuf->curr = {msg_id,
+                  target_sysid,
+                  target_compid,
+                  src_sysid,
+                  src_compid,
+                  payload_len,
+                  payload,
+                  false};
 
     // Check for sequence drops
     if (_stat.read.expected_seq != seq) {
@@ -569,6 +576,11 @@ Endpoint::AcceptState Endpoint::accept_msg(const struct buffer *pbuf) const
     if (pbuf->curr.msg_id != UINT32_MAX && !_blocked_outgoing_src_systems.empty()
         && vector_contains(_blocked_outgoing_src_systems, pbuf->curr.src_sysid)) {
         return Endpoint::AcceptState::Filtered;
+    }
+
+    // For selected internal message sources (SBUS), bypass endpoint discovery checks.
+    if (pbuf->curr.force_forward) {
+        return Endpoint::AcceptState::Accepted;
     }
 
     // Message is broadcast on sysid or sysid is non-existent: accept msg
@@ -1165,11 +1177,13 @@ int VirtualEndpoint::handle_read()
 SBusEndpoint::SBusEndpoint(const std::string &name,
                            const std::string &serial_path,
                            unsigned int serial_baudrate,
-                           bool debug_channels)
+                           bool debug_channels,
+                           bool force_forward)
     : Endpoint{ENDPOINT_TYPE_SBUS, name}
     , _serial_path{serial_path}
     , _serial_baudrate{serial_baudrate}
     , _debug_channels{debug_channels}
+    , _force_forward{force_forward}
 {
     _add_sys_comp_id(SYSTEM_ID, COMPONENT_ID);
 }
@@ -1318,6 +1332,7 @@ void SBusEndpoint::_send_rc_override(const std::array<uint16_t, 18> &channels)
     buf.curr.src_compid = msg.compid;
     buf.curr.payload_len = msg.len;
     buf.curr.payload = reinterpret_cast<uint8_t *>(msg.payload64);
+    buf.curr.force_forward = _force_forward;
 
     Mainloop::get_instance().route_msg(&buf);
 

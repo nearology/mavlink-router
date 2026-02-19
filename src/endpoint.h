@@ -350,7 +350,8 @@ public:
     SBusEndpoint(const std::string &name,
                  const std::string &serial_path,
                  unsigned int serial_baudrate,
-                 bool debug_channels);
+                 bool debug_channels,
+                 bool force_forward);
     ~SBusEndpoint() override = default;
 
     bool start();
@@ -372,6 +373,7 @@ private:
     std::string _serial_path;
     unsigned int _serial_baudrate;
     bool _debug_channels{false};
+    bool _force_forward{false};
     std::vector<uint8_t> _stream_buffer{};
 };
 

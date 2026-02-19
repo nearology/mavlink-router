@@ -60,7 +60,7 @@ constexpr uint8_t SBUS_END_BYTE_ALT_2 = 0x14;
 constexpr uint8_t SBUS_END_BYTE_ALT_3 = 0x24;
 constexpr uint16_t SBUS_MIN = 1000U;
 constexpr uint16_t SBUS_MAX = 2000U;
-constexpr uint8_t SBUS_TARGET_SYSTEM_ID = 0;
+constexpr uint8_t SBUS_TARGET_SYSTEM_ID = 1;
 constexpr uint8_t SBUS_TARGET_COMPONENT_ID = MAV_COMP_ID_AUTOPILOT1;
 } // namespace
 

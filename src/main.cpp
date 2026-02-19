@@ -506,6 +506,7 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         {"SnifferSysid",        false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, sniffer_sysid)},
         {"VirtualGnssDevice",   false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_path)},
         {"VirtualGnssBaud",     false, ConfFile::parse_ul,        OPTIONS_TABLE_STRUCT_FIELD(Configuration, virtual_endpoint_serial_baudrate)},
+        {"Sbus",                false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, sbus_config)},
         {"SbusForceForward",    false, ConfFile::parse_bool,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, sbus_force_forward)},
         {}
     };
@@ -519,6 +520,27 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
     ret = conffile.extract_options("General", LogEndpoint::option_table, &config.log_config);
     if (ret < 0) {
         return ret;
+    }
+
+    if (!config.sbus_config.empty()) {
+        char *device;
+        unsigned long baudrate;
+
+        if (split_on_last_colon(config.sbus_config.c_str(), &device, &baudrate) < 0) {
+            log_error("Invalid Sbus config value '%s'. Expected <device>:<baudrate>",
+                      config.sbus_config.c_str());
+            return -EINVAL;
+        }
+        if (baudrate == ULONG_MAX || device[0] == '\0') {
+            log_error("Invalid Sbus config value '%s'. Expected <device>:<baudrate>",
+                      config.sbus_config.c_str());
+            free(device);
+            return -EINVAL;
+        }
+
+        config.sbus_serial_path = std::string(device);
+        config.sbus_serial_baudrate = baudrate;
+        free(device);
     }
 
     iter = {};

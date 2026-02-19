@@ -40,6 +40,7 @@ struct Configuration {
     unsigned long dedup_period_ms;                  ///< conf "DeduplicationPeriod"
     std::string virtual_endpoint_serial_path;       ///< conf "VirtualGnssDevice" or CLI "virtual-gnss"
     unsigned long virtual_endpoint_serial_baudrate{115200U}; ///< conf "VirtualGnssBaud" or CLI "virtual-gnss"
+    std::string sbus_config; ///< conf "Sbus" in format "<device>:<baudrate>"
     std::string sbus_serial_path; ///< CLI "sbus"
     unsigned long sbus_serial_baudrate{115200U}; ///< CLI "sbus"
     bool debug_sbus{false}; ///< CLI "debug-sbus"

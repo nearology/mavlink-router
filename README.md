@@ -122,7 +122,8 @@ line options. The most important facts are:
     `[General]` section in the config file (`VirtualGnssDevice`,
     `VirtualGnssBaud`) or via the CLI option `-n/--virtual-gnss <dev[:baud]>`.
   - SBUS input can be enabled using `--sbus <dev:baud>` (example:
-    `--sbus /dev/ttyS1:115200`).
+    `--sbus /dev/ttyS1:115200`) or via config in `[General]` with
+    `Sbus=<dev:baud>` (example: `Sbus=/dev/ttyUSB0:100000`).
     Serial framing remains fixed at `8E2` and is not configurable.
     Parsed data is converted to MAVLink `RC_CHANNELS_OVERRIDE` messages.
     `--sbus-force-forward` can be used to forward SBUS-generated MAVLink

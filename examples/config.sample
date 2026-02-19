@@ -98,6 +98,16 @@
 # Default: 115200 (only used if VirtualGnssDevice is set)
 #VirtualGnssBaud = 115200
 
+# Configure SBUS input endpoint with the same format as CLI "--sbus":
+# <device>:<baudrate>
+# Example:
+#Sbus = /dev/ttyUSB0:100000
+
+# Force forwarding of SBUS-generated MAVLink messages even when destination
+# sysid was not discovered yet.
+# Default: <false>
+#SbusForceForward = false
+
 # Log raw mavlink telemetry data as tlog files to disc. Only works if Logging path 
 # is defined. This also uses LogMode to control the recording.
 # Valid values: <true>, <false>
